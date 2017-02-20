@@ -1,0 +1,163 @@
+#!/bin/bash
+
+LOGFILE=/var/log/backup.log
+
+PREFIX="Backup"
+
+PATH_DAILY="Daily"
+PATH_WEEKLY="Weekly"
+PATH_MONTHLY="Monthly"
+PATH_YEARLY="Yearly"
+
+START_DAY="Monday"
+END_DAY="Sunday"
+
+declare -A DAY_NAMES=(  ['Monday']=1 ['Tuesday']=2 ['Wednesday']=3 ['Thursday']=4 ['Friday']=5 ['Saturday']=6 ['Sunday']=7 )
+################################
+# FROM: http://stackoverflow.com/a/14203146  #
+################################
+
+while [[ $# -gt 1 ]]
+do
+key="$1"
+
+case $key in
+    -d|--destination)
+    DESTINATION="$2"
+    shift # past argument
+    ;;
+    -s|--source)
+    SOURCE="$2"
+    shift # past argument
+    ;;
+    -p|--prefix)
+    PREFIX="$2"
+    shift # past argument
+    ;;
+    *)
+            # unknown option
+    ;;
+esac
+shift # past argument or value
+done
+
+date_now=$(LC_TIME=en_US date +"%Y-%m-%d")
+day_now=$(LC_TIME=en_US date +"%d")
+day_now_name=$(LC_TIME=en_US date +"%A")
+day_tomorrow=$(LC_TIME=en_US date +"%d" -d "1day")
+day_next_start=$(LC_TIME=en_US date -d +"next $START_DAY" +%d)
+week_day_now=$(LC_TIME=en_US date +"%u")
+
+year_now=$(LC_TIME=en_US date +"%Y")
+year_tomorrow=$(LC_TIME=en_US date +"%Y" -d "1day")
+year_next_start=$(LC_TIME=en_US date -d +"next $START_DAY" +%Y)
+
+month_now=$(LC_TIME=en_US date +"%Y-%m")
+
+
+if  [[ -z $SOURCE ]]; then
+	echo "Please pass the source path (-s --source)"
+	exit 0
+fi
+
+if [[ -z $DESTINATION ]]; then
+	echo "Please pass the destination path ( -d --destination)"
+	exit 0
+fi
+
+
+function log {
+  local log=$1
+  local file=$2
+
+  #Create the log file if it doesn't already exist
+  if [ ! -e $file ]; then
+    mkdir -p "$(dirname "$file")" && touch "$file"
+  fi
+	echo "$(date "+%Y-%m-%d %T") : $log" >> $file
+}
+
+function backup {
+  local path=$1
+  local file_date=$2
+
+  log "Starting backup" $LOGFILE
+
+  tar --create --absolute-names --file ${path}/${PREFIX}-${file_date}.tar $SOURCE
+
+
+  if [ !$? ]; then # $? = 0 If the command before was excecuted successfully
+  	log "Backup of '${SOURCE}' successfully saved to '${path}/${PREFIX}-${file_date}.tar'"  $LOGFILE
+
+    return 1
+  else
+  	log "Backup failed."  $LOGFILE
+
+    return 0
+  fi
+}
+
+if [ $week_day_now -ge ${DAY_NAMES[$START_DAY]} ] && [ $week_day_now -le ${DAY_NAMES[$END_DAY]} ]; then
+  echo "Time to backup"
+  if [ $year_next_start -lt $year_now ] || [ $year_tomorrow -lt $year_now ]; then
+    # This is the last backup of the year
+    # Create yearly Backup and delete daily, weekly and monthly backups
+    echo "Yearly Backup"
+    path="${DESTINATION}/${PATH_YEARLY}"
+    # Create folder if it doesn't exist
+    if [ ! -d $path ]; then
+        mkdir -p $path
+    fi
+    if [ $(backup $path $year_now) ]; then
+        rm $path/*
+        rm ${DESTINATION}/${PATH_MONTHLY}/*
+        rm ${DESTINATION}/${PATH_WEEKLY}/*
+        rm ${DESTINATION}/${PATH_DAILY}/*
+    fi
+  else
+    if [ $day_next_start -lt $day_now ] || [ $day_tomorrow -lt $day_now ]; then
+      # This is the last backup of the month
+      # Create monthly Backup and delete daily and weekly backups
+      echo "Monthly Backup"
+      path="${DESTINATION}/${PATH_MONTHLY}"
+      # Create folder if it doesn't exist
+      if [ ! -d $path ]; then
+          mkdir -p $path
+      fi
+      if [ $(backup $path $month_now) ]; then
+        rm $path/*
+        rm ${DESTINATION}/${PATH_WEEKLY}/*
+        rm ${DESTINATION}/${PATH_DAILY}/*
+      fi
+    else
+      if [[$day_now_name == $END_DAY ]; then
+        # This is the last backup of the week
+        # Create weekly backup and delete daily backups
+        echo "Weekly Backup"
+        path="${DESTINATION}/${PATH_WEEKLY}"
+
+        # Create folder if it doesn't exist
+        if [ ! -d $path ]; then
+            mkdir -p $path
+        fi
+        if [ $(backup $path $date_now) ]; then
+          rm $path/*
+          rm ${DESTINATION}/${PATH_DAILY}/*
+        fi
+      else
+        # This is a daily backup
+        echo "Daily Backup"
+        path="${DESTINATION}/${PATH_DAILY}"
+
+        # Create folder if it doesn't exist
+        if [ ! -d $path ]; then
+            mkdir -p $path
+        fi
+        if [ $(backup $path $date_now) ]; then
+            rm -R $path/*
+        fi
+
+      fi
+    fi
+  fi
+fi
